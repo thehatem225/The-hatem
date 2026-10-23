@@ -1,0 +1,66 @@
+class DayTwoVideoManager extends StatefulWidget {
+  @override
+  _DayTwoVideoManagerState createState() => _DayTwoVideoManagerState();
+}
+
+class _DayTwoVideoManagerState extends State<DayTwoVideoManager> {
+  late VideoPlayerController _controller;
+  int _currentStage = 1; // المرحلة الحالية (1 أو 2 أو 3)
+  bool _isPausedForChat = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.asset('assets/videos/day2_full_30s.mp4')
+      ..initialize().then((_) {
+        _controller.setVolume(0.0); // كتم الصوت الأساسي في الجزء الأول
+        _controller.play();
+        _setupStageStopper();
+        setState(() {});
+      });
+  }
+
+  void _setupStageStopper() {
+    _controller.addListener(() {
+      final pos = _controller.value.position.inMilliseconds;
+
+      // يقف تلقائياً عند الثانية 10 في المرحلة الأولى
+      if (_currentStage == 1 && pos >= 10000 && !_isPausedForChat) {
+        _controller.pause();
+        _isPausedForChat = true;
+      }
+      // يقف تلقائياً عند الثانية 20 في المرحلة الثانية
+      else if (_currentStage == 2 && pos >= 20000 && !_isPausedForChat) {
+        _controller.pause();
+        _isPausedForChat = true;
+      }
+    });
+  }
+
+  // الدالة دي بتستدعيها لما اللاعب يرد على الظل أو يدوس زرار "تقدم"
+  void advanceToNextStage() {
+    if (_currentStage < 3) {
+      setState(() {
+        _currentStage++;
+        _isPausedForChat = false;
+      });
+      // لو دخل المرحلة التالتة نشغل صوت الفيديو الأصلي عشان يسمع صوت المفتاح ورزعة الباب!
+      if (_currentStage == 2 || _currentStage == 3) {
+        _controller.setVolume(1.0);
+      }
+      _controller.play(); // يكمل فوراً من مكان ما وقف بدون أي تقطيع!
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_controller.value.isInitialized) return Container(color: Colors.black);
+    return VideoPlayer(_controller);
+  }
+}

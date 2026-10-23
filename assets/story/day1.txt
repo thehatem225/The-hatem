@@ -1,0 +1,99 @@
+import 'package:flutter/material.dart';
+import 'package:audioplayers/audioplayers.dart';
+
+// اليوم الأول الهادي - كل الأصوات جوة نفس اليوم
+enum ChapterState { introBirds, tensionHeartbeat, fearChosen }
+
+class ChapterOneScreen extends StatefulWidget {
+  @override
+  _ChapterOneScreenState createState() => _ChapterOneScreenState();
+}
+
+class _ChapterOneScreenState extends State<ChapterOneScreen> {
+  final AudioPlayer _bgAudioPlayer = AudioPlayer();
+  final AudioPlayer _sfxAudioPlayer = AudioPlayer();
+
+  ChapterState _currentState = ChapterState.introBirds;
+  String _currentBgImage = 'assets/images/forest_morning.png';
+
+  @override
+  void initState() {
+    super.initState();
+    _startChapterIntro();
+  }
+
+  // 1. الصبح - اليوم الأول هادي 10%
+  Future<void> _startChapterIntro() async {
+    try {
+      await _bgAudioPlayer.setVolume(0.1); // هادي 10%
+      await _bgAudioPlayer.setSource(AssetSource('audio/morning_birds.mp3'));
+      await _bgAudioPlayer.setReleaseMode(ReleaseMode.loop);
+      await _bgAudioPlayer.resume();
+    } catch (e) {
+      print("خطأ في تشغيل العصافير: $e");
+    }
+  }
+
+  // 2. العصر + المغرب - طقة + نبض - 25%
+  Future<void> _triggerTensionPhase() async {
+    setState(() {
+      _currentState = ChapterState.tensionHeartbeat;
+    });
+    try {
+      await _bgAudioPlayer.setVolume(0.05);
+      await Future.delayed(Duration(seconds: 1));
+
+      await _sfxAudioPlayer.setVolume(0.15);
+      await _sfxAudioPlayer.play(AssetSource('audio/wood_crack.mp3'));
+
+      await _bgAudioPlayer.stop();
+      await _bgAudioPlayer.setSource(AssetSource('audio/heartbeat.mp3'));
+      await _bgAudioPlayer.setReleaseMode(ReleaseMode.loop);
+      await _bgAudioPlayer.setVolume(0.25); // 25% توتر خفيف
+      await _bgAudioPlayer.resume();
+    } catch (e) {
+      print("خطأ في مرحلة التوتر: $e");
+    }
+  }
+
+  // 3. الليل - نهاية اليوم الأول - 35% والهمس يكمل لليوم التاني
+  Future<void> _onFearSelected(String fearType) async {
+    setState(() {
+      _currentState = ChapterState.fearChosen;
+      _currentBgImage = (fearType == 'failure')
+          ? 'assets/images/forest_storm.png'
+          : 'assets/images/forest_shadows.png';
+    });
+    try {
+      // سيب النبض شغال واطي
+      await _bgAudioPlayer.setVolume(0.1);
+
+      String finalAudio = (fearType == 'failure') ? 'audio/wind_storm.mp3' : 'audio/whispers.mp3';
+
+      // الهمس هيكمل لليوم التاني - مش هنوقفه
+      await _sfxAudioPlayer.setSource(AssetSource(finalAudio));
+      await _sfxAudioPlayer.setReleaseMode(ReleaseMode.loop);
+      await _sfxAudioPlayer.setVolume(0.35); // نهاية اليوم الأول 35%
+      await _sfxAudioPlayer.resume();
+    } catch (e) {
+      print("خطأ في صوت الخوف: $e");
+    }
+  }
+
+  // الانتقال لليوم التاني بنفس الهمس
+  void _goToDayTwo() {
+    // متوقفش _sfxAudioPlayer - خليه يكمل
+    // في DayTwoScreen هتاخد نفس الـ player وتعلي الصوت لـ 0.75
+    Navigator.pushNamed(context, '/dayTwo', arguments: {
+      'keepAudio': _sfxAudioPlayer,
+      'fearType': _currentBgImage
+    });
+  }
+
+  @override
+  void dispose() {
+    // مهم: متعملش dispose لو هتكمل لليوم التاني
+    // _bgAudioPlayer.dispose();
+    // _sfxAudioPlayer.dispose();
+    _bgAudioPlayer.dispose();
+    // _sfxAudioPlayer هنسيبه يكمل
