@@ -1,0 +1,102 @@
+import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
+
+class StorySequencePlayer extends StatefulWidget {
+  const StorySequencePlayer({super.key});
+
+  @override
+  State<StorySequencePlayer> createState() => _StorySequencePlayerState();
+}
+
+class _StorySequencePlayerState extends State<StorySequencePlayer> {
+  // قائمة الفيديوهات بالترتيب المطلوب
+  final List<String> _videoPaths = [
+    'assets/videos/scene_1_fall.mp4',              // 1. السقوط وإشعال الشمعة
+    'assets/videos/scene_2_candle_flashlight.mp4', // 2. رمي الشمعة والتقاط المصباح
+    'assets/videos/scene_3_which_way.mp4',         // 3. جملة Which way
+  ];
+
+  int _currentIndex = 0;
+  VideoPlayerController? _currentController;
+  VideoPlayerController? _nextController;
+
+  @override
+  void initState() {
+    super.initState();
+    _initSequence();
+  }
+
+  Future<void> _initSequence() async {
+    _currentController = VideoPlayerController.asset(_videoPaths[_currentIndex]);
+    await _currentController!.initialize();
+    _currentController!.addListener(_videoListener);
+    _currentController!.play();
+    setState(() {});
+
+    // تجهيز الفيديو التالي مسبقاً لمنع التقطيع عند الانتقال
+    _preloadNextVideo();
+  }
+
+  Future<void> _preloadNextVideo() async {
+    if (_currentIndex + 1 < _videoPaths.length) {
+      _nextController = VideoPlayerController.asset(_videoPaths[_currentIndex + 1]);
+      await _nextController!.initialize();
+    }
+  }
+
+  void _videoListener() {
+    final controller = _currentController;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    // التحقق من وصول الفيديو لنهايته
+    if (controller.value.position >= controller.value.duration &&
+        !controller.value.isPlaying) {
+      _playNext();
+    }
+  }
+
+  Future<void> _playNext() async {
+    if (_currentIndex + 1 >= _videoPaths.length) {
+      // انتهت المشاهد الثلاثة (يمكنك هنا إظهار اختيارات اللعبة أو الانتقال للشاشة التالية)
+      return;
+    }
+
+    final oldController = _currentController;
+    oldController?.removeListener(_videoListener);
+
+    setState(() {
+      _currentIndex++;
+      _currentController = _nextController;
+      _nextController = null;
+    });
+
+    _currentController!.addListener(_videoListener);
+    _currentController!.play();
+
+    await oldController?.dispose();
+    _preloadNextVideo();
+  }
+
+  @override
+  void dispose() {
+    _currentController?.removeListener(_videoListener);
+    _currentController?.dispose();
+    _nextController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: _currentController != null && _currentController!.value.isInitialized
+            ? AspectRatio(
+                aspectRatio: _currentController!.value.aspectRatio,
+                child: VideoPlayer(_currentController!),
+              )
+            : const CircularProgressIndicator(color: Colors.greenAccent),
+      ),
+    );
+  }
+}
