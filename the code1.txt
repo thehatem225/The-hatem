@@ -1,0 +1,583 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:video_player/video_player.dart';
+
+/// مراحل القصة بالترتيب الكامل (المقدمة + الممرين)
+enum StoryStage {
+  intro1Fall,          // 1. السقوط وإشعال الشمعة
+  intro2Flashlight,    // 2. انطفاء الشمعة والتقاط الكشاف
+  intro3WhichWay,      // 3. سؤال Which way واختيار الممر
+  future1Enter,        // 4. ممر المستقبل (1): الدخول و"مين هناك؟"
+  future2Mirror,       // 5. ممر المستقبل (2): مواجهة المرآة
+  dark1Enter,          // 6. ممر الظلام والضيق (1): الدخول و"يا رب خرجني من هنا"
+  dark2Narrow,         // 7. ممر الظلام والضيق (2): ضيق الجدران والزحف في الظلام
+}
+
+class FullInteractiveMazeGame extends StatefulWidget {
+  const FullInteractiveMazeGame({super.key});
+
+  @override
+  State<FullInteractiveMazeGame> createState() =>
+      _FullInteractiveMazeGameState();
+}
+
+class _FullInteractiveMazeGameState extends State<FullInteractiveMazeGame> {
+  // ربط كل مرحلة بملف الفيديو الخاص بها
+  static const Map<StoryStage, String> _stageVideos = {
+    StoryStage.intro1Fall: 'assets/videos/1_fall_candle.mp4',
+    StoryStage.intro2Flashlight: 'assets/videos/2_candle_flashlight.mp4',
+    StoryStage.intro3WhichWay: 'assets/videos/3_which_way.mp4',
+    StoryStage.future1Enter: 'assets/videos/4_future_enter.mp4',
+    StoryStage.future2Mirror: 'assets/videos/5_future_mirror.mp4',
+    StoryStage.dark1Enter: 'assets/videos/6_dark_enter.mp4',
+    StoryStage.dark2Narrow: 'assets/videos/7_dark_narrow.mp4',
+  };
+
+  StoryStage _currentStage = StoryStage.intro1Fall;
+
+  VideoPlayerController? _currentController;
+  VideoPlayerController? _nextController;
+  Timer? _heartbeatTimer;
+
+  // حالات ظهور التفاعلات على الشاشة
+  bool _showActionOverlay = false;
+  bool _actionCompletedInCurrentStage = false;
+
+  // حالة اختيار الممر بعد فيديو Which way
+  bool _showCorridorSelection = false;
+
+  // حالة تفاعل الزحف (الضغط السريع) في ممر الأماكن الضيقة
+  bool _showCrawlStruggle = false;
+  bool _crawlCompleted = false;
+  int _crawlTapsLeft = 3;
+
+  // حالة القرار النهائي في آخر كل ممر
+  bool _showFinalDecision = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStage(StoryStage.intro1Fall, preloadStage: StoryStage.intro2Flashlight);
+  }
+
+  /// تحميل الفيديو الحالي وتجهيز الفيديو التالي في الخلفية لمنع أي شاشة سوداء
+  Future<void> _loadStage(
+    StoryStage stage, {
+    StoryStage? preloadStage,
+  }) async {
+    _stopHaptics();
+    final oldController = _currentController;
+    oldController?.removeListener(_videoListener);
+
+    setState(() {
+      _currentStage = stage;
+      _showActionOverlay = false;
+      _actionCompletedInCurrentStage = false;
+      _showCorridorSelection = false;
+      _showCrawlStruggle = false;
+      _crawlCompleted = false;
+      _crawlTapsLeft = 3;
+      _showFinalDecision = false;
+    });
+
+    // إذا كان الفيديو محملاً مسبقاً في _nextController نستخدمه فوراً
+    if (_nextController != null &&
+        _nextController!.dataSource == _stageVideos[stage]) {
+      _currentController = _nextController;
+      _nextController = null;
+    } else {
+      await _nextController?.dispose();
+      _nextController = null;
+      _currentController = VideoPlayerController.asset(_stageVideos[stage]!);
+      await _currentController!.initialize();
+    }
+
+    _currentController!.addListener(_videoListener);
+    _currentController!.play();
+    setState(() {});
+
+    await oldController?.dispose();
+
+    // تجهيز الفيديو التالي في الرام
+    if (preloadStage != null) {
+      _nextController = VideoPlayerController.asset(_stageVideos[preloadStage]!);
+      await _nextController!.initialize();
+    }
+  }
+
+  /// اهتزاز الهاتف كنبضات القلب وقت الخطر
+  void _startHaptics() {
+    _heartbeatTimer?.cancel();
+    HapticFeedback.heavyImpact();
+    _heartbeatTimer = Timer.periodic(const Duration(milliseconds: 800), (_) {
+      HapticFeedback.mediumImpact();
+    });
+  }
+
+  void _stopHaptics() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  /// مراقب التوقيت بالمللي ثانية لإظهار التفاعلات في اللحظة السينمائية الدقيقة
+  void _videoListener() {
+    final controller = _currentController;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    final pos = controller.value.position.inMilliseconds;
+    final dur = controller.value.duration.inMilliseconds;
+
+    switch (_currentStage) {
+      // -----------------------------------------------------------------------
+      // 1. فيديو السقوط: التوقف عند الثانية 5.5 لإشعال الشمعة
+      // -----------------------------------------------------------------------
+      case StoryStage.intro1Fall:
+        if (!_actionCompletedInCurrentStage && pos >= 5500) {
+          if (!_showActionOverlay) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showActionOverlay = true);
+          }
+          return;
+        }
+        if (pos >= dur - 150 && !controller.value.isPlaying) {
+          _loadStage(
+            StoryStage.intro2Flashlight,
+            preloadStage: StoryStage.intro3WhichWay,
+          );
+        }
+        break;
+
+      // -----------------------------------------------------------------------
+      // 2. فيديو انطفاء الشمعة: التوقف عند الثانية 6.0 لالتقاط الكشاف
+      // -----------------------------------------------------------------------
+      case StoryStage.intro2Flashlight:
+        if (!_actionCompletedInCurrentStage && pos >= 6000) {
+          if (!_showActionOverlay) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showActionOverlay = true);
+          }
+          return;
+        }
+        if (pos >= dur - 150 && !controller.value.isPlaying) {
+          _loadStage(StoryStage.intro3WhichWay);
+        }
+        break;
+
+      // -----------------------------------------------------------------------
+      // 3. فيديو Which way: إظهار اختيار الممرين عند الثانية 7.0 مع عمل Loop
+      // -----------------------------------------------------------------------
+      case StoryStage.intro3WhichWay:
+        if (pos >= 7000) {
+          if (!_showCorridorSelection) {
+            _startHaptics();
+            setState(() => _showCorridorSelection = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 7000));
+          }
+        }
+        break;
+
+      // -----------------------------------------------------------------------
+      // 4. ممر المستقبل (1 - الدخول): التوقف عند الثانية 8.5 بعد "مين هناك؟"
+      // -----------------------------------------------------------------------
+      case StoryStage.future1Enter:
+        if (pos >= 8500 && !_showActionOverlay) {
+          controller.pause();
+          _startHaptics();
+          setState(() => _showActionOverlay = true);
+        }
+        break;
+
+      // -----------------------------------------------------------------------
+      // 5. ممر المستقبل (2 - المرآة): قرار النهاية عند الثانية 7.5 مع Loop
+      // -----------------------------------------------------------------------
+      case StoryStage.future2Mirror:
+        if (pos >= 7500) {
+          if (!_showFinalDecision) {
+            _startHaptics();
+            setState(() => _showFinalDecision = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 7500));
+          }
+        }
+        break;
+
+      // -----------------------------------------------------------------------
+      // 6. ممر الظلام (1 - الدخول): التوقف عند الثانية 8.5 للاندفاع للأمام
+      // -----------------------------------------------------------------------
+      case StoryStage.dark1Enter:
+        if (pos >= 8500 && !_showActionOverlay) {
+          controller.pause();
+          _startHaptics();
+          setState(() => _showActionOverlay = true);
+        }
+        break;
+
+      // -----------------------------------------------------------------------
+      // 7. ممر الظلام (2 - الضيق): تفاعل الزحف عند 5.2 ثانية ثم قرار الظلام عند 8.0
+      // -----------------------------------------------------------------------
+      case StoryStage.dark2Narrow:
+        // أولاً: تفاعل الضغط السريع للزحف عند النزول على الركبتين
+        if (!_crawlCompleted && pos >= 5200) {
+          if (!_showCrawlStruggle) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showCrawlStruggle = true);
+          }
+          return;
+        }
+        // ثانياً: بعد الزحف وانطفاء النور، إظهار القرار النهائي في الظلام
+        if (_crawlCompleted && pos >= 8000) {
+          if (!_showFinalDecision) {
+            _startHaptics();
+            setState(() => _showFinalDecision = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 8000));
+          }
+        }
+        break;
+    }
+  }
+
+  /// تنفيذ زر التفاعل الحالي (إشعال الشمعة / التقاط الكشاف / التقدم للمرآة أو الممر الضيق)
+  void _handleActionPressed() {
+    _stopHaptics();
+    HapticFeedback.lightImpact();
+
+    if (_currentStage == StoryStage.intro1Fall ||
+        _currentStage == StoryStage.intro2Flashlight) {
+      // استئناف نفس الفيديو ليكمل إشعال الشمعة أو تشغيل الكشاف
+      setState(() {
+        _showActionOverlay = false;
+        _actionCompletedInCurrentStage = true;
+      });
+      _currentController?.play();
+    } else if (_currentStage == StoryStage.future1Enter) {
+      // الانتقال الفوري لفيديو المرآة المحمل مسبقاً
+      _loadStage(StoryStage.future2Mirror);
+    } else if (_currentStage == StoryStage.dark1Enter) {
+      // الانتقال الفوري لفيديو ضيق الجدران المحمل مسبقاً
+      _loadStage(StoryStage.dark2Narrow);
+    }
+  }
+
+  /// تنفيذ ضغطات الزحف في الممر الضيق
+  void _handleCrawlTap() {
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _crawlTapsLeft--;
+      if (_crawlTapsLeft <= 0) {
+        _showCrawlStruggle = false;
+        _crawlCompleted = true;
+        _stopHaptics();
+        _currentController?.play();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _stopHaptics();
+    _currentController?.removeListener(_videoListener);
+    _currentController?.dispose();
+    _nextController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isReady =
+        _currentController != null && _currentController!.value.isInitialized;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1. مشغل الفيديو
+          if (isReady)
+            Center(
+              child: AspectRatio(
+                aspectRatio: _currentController!.value.aspectRatio,
+                child: VideoPlayer(_currentController!),
+              ),
+            )
+          else
+            const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+            ),
+
+          // 2. أزرار التفاعل السريع (الشمعة / الكشاف / الانتقال للمرآة أو الضيق)
+          if (_showActionOverlay) _buildStageActionOverlay(),
+
+          // 3. شاشة اختيار الممر بعد جملة Which way?
+          if (_showCorridorSelection) _buildCorridorSelectionOverlay(),
+
+          // 4. تفاعل الضغط المتتالي للزحف في ممر الأماكن الضيقة
+          if (_showCrawlStruggle) _buildCrawlStruggleOverlay(),
+
+          // 5. القرارات النهائية في آخر كل ممر
+          if (_showFinalDecision) _buildFinalDecisionOverlay(),
+        ],
+      ),
+    );
+  }
+
+  /// بناء زر التفاعل المناسب لكل مشهد
+  Widget _buildStageActionOverlay() {
+    String title = '';
+    String buttonText = '';
+    IconData icon = Icons.touch_app_outlined;
+    Alignment alignment = Alignment.center;
+
+    switch (_currentStage) {
+      case StoryStage.intro1Fall:
+        title = 'المكان مظلم تماماً.. وهناك شمعة بجانبك';
+        buttonText = 'إشعال الشمعة بعود الثقاب';
+        icon = Icons.local_fire_department_outlined;
+        alignment = const Alignment(-0.3, 0.3);
+        break;
+      case StoryStage.intro2Flashlight:
+        title = 'انطفأت الشمعة! يوجد مصباح يدوي على الأرض';
+        buttonText = 'التقاط الكشاف وتشغيله بسرعة';
+        icon = Icons.flashlight_on_outlined;
+        alignment = const Alignment(0.0, 0.72);
+        break;
+      case StoryStage.future1Enter:
+        title = 'صوت الهمس يناديك.. هناك مرآة تلمع في نهاية الممر!';
+        buttonText = 'توجيه الكشاف والاقتراب من المرآة';
+        icon = Icons.visibility_outlined;
+        break;
+      case StoryStage.dark1Enter:
+        title = 'الجدران الحجرية تبدأ في الاقتراب من بعضها!';
+        buttonText = 'الاندفاع للأمام قبل انسداد الممر';
+        icon = Icons.directions_run_outlined;
+        break;
+      default:
+        break;
+    }
+
+    return Container(
+      color: Colors.black.withOpacity(0.5),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Align(
+        alignment: alignment,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 14),
+            // شريط توتر زمني لمدة 5 ثوانٍ
+            SizedBox(
+              width: 210,
+              child: TweenAnimationBuilder<double>(
+                key: ValueKey(_currentStage),
+                tween: Tween(begin: 1.0, end: 0.0),
+                duration: const Duration(seconds: 5),
+                onEnd: _handleActionPressed,
+                builder: (context, value, _) {
+                  return LinearProgressIndicator(
+                    value: value,
+                    backgroundColor: Colors.white12,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      value > 0.3 ? const Color(0xFF00FF88) : Colors.redAccent,
+                    ),
+                    minHeight: 5,
+                    borderRadius: BorderRadius.circular(8),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 18),
+            GestureDetector(
+              onTap: _handleActionPressed,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A0F0D),
+                  borderRadius: BorderRadius.circular(30),
+                  border:
+                      Border.all(color: const Color(0xFF00FF88), width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00FF88).withOpacity(0.35),
+                      blurRadius: 16,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, color: const Color(0xFF00FF88)),
+                    const SizedBox(width: 10),
+                    Text(
+                      buttonText,
+                      style: const TextStyle(
+                        color: Color(0xFF00FF88),
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// شاشة اختيار الممر بعد انتهاء الفيديوهات الثلاثة الأولى (Which way?)
+  Widget _buildCorridorSelectionOverlay() {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 30, 20, 40),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [
+              Colors.black.withOpacity(0.95),
+              Colors.black.withOpacity(0.75),
+              Colors.transparent,
+            ],
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'أي طريق ستسلك؟ (Which way?)',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 19,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 18),
+            // اختيار الممر الأول: الخوف من المستقبل
+            _buildChoiceButton(
+              text: 'الممر الأول: ممر الهمس والمرآة (الخوف من المستقبل)',
+              onTap: () => _loadStage(
+                StoryStage.future1Enter,
+                preloadStage: StoryStage.future2Mirror,
+              ),
+            ),
+            // اختيار الممر الثاني: الخوف من الظلام والأماكن الضيقة
+            _buildChoiceButton(
+              text: 'الممر الثاني: السرداب الضيق (الخوف من الظلام والاختناق)',
+              onTap: () => _loadStage(
+                StoryStage.dark1Enter,
+                preloadStage: StoryStage.dark2Narrow,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// واجهة الضغط المتتالي للزحف في الممر الضيق
+  Widget _buildCrawlStruggleOverlay() {
+    return Container(
+      color: Colors.black.withOpacity(0.6),
+      child: Align(
+        alignment: const Alignment(0.0, 0.4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'الجدران تطبق عليك والسقف ينخفض!',
+              style: TextStyle(
+                color: Colors.redAccent,
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'اضغط بسرعة للزحف للأمام ($_crawlTapsLeft ضغطات متبقية)',
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            const SizedBox(height: 18),
+            GestureDetector(
+              onTap: _handleCrawlTap,
+              child: Container(
+                width: 90,
+                height: 90,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF0A0F0D),
+                  border:
+                      Border.all(color: const Color(0xFF00FF88), width: 2.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00FF88).withOpacity(0.4),
+                      blurRadius: 22,
+                      spreadRadius: 4,
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.touch_app_outlined,
+                  color: Color(0xFF00FF88),
+                  size: 42,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// شاشة القرار النهائي في نهاية الممر الأول أو الثاني
+  Widget _buildFinalDecisionOverlay() {
+    final isFuture = _currentStage == StoryStage.future2Mirror;
+
+    final question = isFuture
+        ? 'انعكاسك يسألك: "أنا اخترت البقاء.. هل سوف تكون كذلك؟"'
+        : 'انطفأ الكشاف وأطبقت الجدران حولك في الظلام.. ماذا ستفعل؟';
+
+    final firstChoice = isFuture
+        ? 'تحطيم المرآة ورفض الاستسلام لهذا المصير'
+        : 'تنظيم الأنفاس والزحف بهدوء نحو تيار الهواء';
+
+    final secondChoice = 'التراجع والعودة لتقاطع المتاهة لاختيار ممر آخر';
+
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 30, 20, 40),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [
+              Colors.black.withOpacity(0.95),
+              Colors.black.withOpacity(0.8),
+              Colors.transparent,
+            ],
+          ),
+        ),
+        child: Column
