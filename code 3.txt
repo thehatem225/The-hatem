@@ -1,0 +1,624 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:video_player/video_player.dart';
+
+/// مراحل القصة بالترتيب الكامل (المقدمة + الممرات الثلاثة)
+enum StoryStage {
+  intro1Fall,          // 1. السقوط وإشعال الشمعة
+  intro2Flashlight,    // 2. انطفاء الشمعة والتقاط الكشاف
+  intro3WhichWay,      // 3. سؤال Which way واختيار الممر
+  future1Enter,        // ممر الهمس والمرآة (1)
+  future2Mirror,       // ممر الهمس والمرآة (2)
+  dark1Enter,          // السرداب الضيق (1)
+  dark2Narrow,         // السرداب الضيق (2)
+  phone1Enter,         // 📱 ممر الهاتف والرسالة الواقعية (1)
+  phone2Message,       // 📱 ممر الهاتف والرسالة الواقعية (2)
+}
+
+class FullInteractiveMazeGame extends StatefulWidget {
+  const FullInteractiveMazeGame({super.key});
+
+  @override
+  State<FullInteractiveMazeGame> createState() =>
+      _FullInteractiveMazeGameState();
+}
+
+class _FullInteractiveMazeGameState extends State<FullInteractiveMazeGame> {
+  // ربط كل مرحلة بملف الفيديو الخاص بها
+  static const Map<StoryStage, String> _stageVideos = {
+    StoryStage.intro1Fall: 'assets/videos/1_fall_candle.mp4',
+    StoryStage.intro2Flashlight: 'assets/videos/2_candle_flashlight.mp4',
+    StoryStage.intro3WhichWay: 'assets/videos/3_which_way.mp4',
+    StoryStage.future1Enter: 'assets/videos/clean_1.mp4',
+    StoryStage.future2Mirror: 'assets/videos/clean.mp4',
+    StoryStage.dark1Enter: 'assets/videos/6_dark_enter.mp4',
+    StoryStage.dark2Narrow: 'assets/videos/7_dark_narrow.mp4',
+    StoryStage.phone1Enter: 'assets/videos/phone_enter.mp4',       
+    StoryStage.phone2Message: 'assets/videos/phone_message.mp4', 
+  };
+
+  StoryStage _currentStage = StoryStage.intro1Fall;
+
+  VideoPlayerController? _currentController;
+  VideoPlayerController? _nextController;
+  Timer? _heartbeatTimer;
+
+  bool _showActionOverlay = false;
+  bool _actionCompletedInCurrentStage = false;
+  bool _showCorridorSelection = false;
+  bool _showCrawlStruggle = false;
+  bool _crawlCompleted = false;
+  int _crawlTapsLeft = 3;
+  bool _showFinalDecision = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStage(StoryStage.intro1Fall, preloadStage: StoryStage.intro2Flashlight);
+  }
+
+  Future<void> _loadStage(
+    StoryStage stage, {
+    StoryStage? preloadStage,
+  }) async {
+    _stopHaptics();
+    final oldController = _currentController;
+    oldController?.removeListener(_videoListener);
+
+    setState(() {
+      _currentStage = stage;
+      _showActionOverlay = false;
+      _actionCompletedInCurrentStage = false;
+      _showCorridorSelection = false;
+      _showCrawlStruggle = false;
+      _crawlCompleted = false;
+      _crawlTapsLeft = 3;
+      _showFinalDecision = false;
+    });
+
+    if (_nextController != null &&
+        _nextController!.dataSource == _stageVideos[stage]) {
+      _currentController = _nextController;
+      _nextController = null;
+    } else {
+      await _nextController?.dispose();
+      _nextController = null;
+      _currentController = VideoPlayerController.asset(_stageVideos[stage]!);
+      await _currentController!.initialize();
+    }
+
+    _currentController!.addListener(_videoListener);
+    _currentController!.play();
+    setState(() {});
+
+    await oldController?.dispose();
+
+    if (preloadStage != null) {
+      _nextController = VideoPlayerController.asset(_stageVideos[preloadStage]!);
+      await _nextController!.initialize();
+    }
+  }
+
+  void _startHaptics() {
+    _heartbeatTimer?.cancel();
+    HapticFeedback.heavyImpact();
+    _heartbeatTimer = Timer.periodic(const Duration(milliseconds: 800), (_) {
+      HapticFeedback.mediumImpact();
+    });
+  }
+
+  void _stopHaptics() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  void _videoListener() {
+    final controller = _currentController;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    final pos = controller.value.position.inMilliseconds;
+    final dur = controller.value.duration.inMilliseconds;
+
+    switch (_currentStage) {
+      case StoryStage.intro1Fall:
+        if (!_actionCompletedInCurrentStage && pos >= 5500) {
+          if (!_showActionOverlay) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showActionOverlay = true);
+          }
+          return;
+        }
+        if (pos >= dur - 150 && !controller.value.isPlaying) {
+          _loadStage(
+            StoryStage.intro2Flashlight,
+            preloadStage: StoryStage.intro3WhichWay,
+          );
+        }
+        break;
+
+      case StoryStage.intro2Flashlight:
+        if (!_actionCompletedInCurrentStage && pos >= 6000) {
+          if (!_showActionOverlay) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showActionOverlay = true);
+          }
+          return;
+        }
+        if (pos >= dur - 150 && !controller.value.isPlaying) {
+          _loadStage(StoryStage.intro3WhichWay);
+        }
+        break;
+
+      case StoryStage.intro3WhichWay:
+        if (pos >= 7000) {
+          if (!_showCorridorSelection) {
+            _startHaptics();
+            setState(() => _showCorridorSelection = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 7000));
+          }
+        }
+        break;
+
+      case StoryStage.future1Enter:
+        if (pos >= 4200 && !_showActionOverlay) {
+          controller.pause();
+          _startHaptics();
+          setState(() => _showActionOverlay = true);
+        }
+        break;
+
+      case StoryStage.future2Mirror:
+        if (pos >= 6500) {
+          if (!_showFinalDecision) {
+            _startHaptics();
+            setState(() => _showFinalDecision = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 6500));
+          }
+        }
+        break;
+
+      case StoryStage.dark1Enter:
+        if (pos >= 8500 && !_showActionOverlay) {
+          controller.pause();
+          _startHaptics();
+          setState(() => _showActionOverlay = true);
+        }
+        break;
+
+      case StoryStage.dark2Narrow:
+        if (!_crawlCompleted && pos >= 5200) {
+          if (!_showCrawlStruggle) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showCrawlStruggle = true);
+          }
+          return;
+        }
+        if (_crawlCompleted && pos >= 8000) {
+          if (!_showFinalDecision) {
+            _startHaptics();
+            setState(() => _showFinalDecision = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 8000));
+          }
+        }
+        break;
+
+      case StoryStage.phone1Enter:
+        if (pos >= 8000 && !_showActionOverlay) {
+          controller.pause();
+          _startHaptics();
+          setState(() => _showActionOverlay = true);
+        }
+        break;
+
+      case StoryStage.phone2Message:
+        if (pos >= 7000) {
+          if (!_showFinalDecision) {
+            _startHaptics();
+            setState(() => _showFinalDecision = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 7000));
+          }
+        }
+        break;
+    }
+  }
+
+  void _handleActionPressed() {
+    _stopHaptics();
+    HapticFeedback.lightImpact();
+
+    if (_currentStage == StoryStage.intro1Fall ||
+        _currentStage == StoryStage.intro2Flashlight) {
+      setState(() {
+        _showActionOverlay = false;
+        _actionCompletedInCurrentStage = true;
+      });
+      _currentController?.play();
+    } else if (_currentStage == StoryStage.future1Enter) {
+      _loadStage(StoryStage.future2Mirror);
+    } else if (_currentStage == StoryStage.dark1Enter) {
+      _loadStage(StoryStage.dark2Narrow);
+    } else if (_currentStage == StoryStage.phone1Enter) {
+      _loadStage(StoryStage.phone2Message);
+    }
+  }
+
+  void _handleCrawlTap() {
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _crawlTapsLeft--;
+      if (_crawlTapsLeft <= 0) {
+        _showCrawlStruggle = false;
+        _crawlCompleted = true;
+        _stopHaptics();
+        _currentController?.play();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _stopHaptics();
+    _currentController?.removeListener(_videoListener);
+    _currentController?.dispose();
+    _nextController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isReady =
+        _currentController != null && _currentController!.value.isInitialized;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (isReady)
+            Center(
+              child: AspectRatio(
+                aspectRatio: _currentController!.value.aspectRatio,
+                child: VideoPlayer(_currentController!),
+              ),
+            )
+          else
+            const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00FF88)),
+            ),
+
+          if (_showActionOverlay) _buildStageActionOverlay(),
+          if (_showCorridorSelection) _buildCorridorSelectionOverlay(),
+          if (_showCrawlStruggle) _buildCrawlStruggleOverlay(),
+          if (_showFinalDecision) _buildFinalDecisionOverlay(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStageActionOverlay() {
+    String title = '';
+    String buttonText = '';
+    IconData icon = Icons.touch_app_outlined;
+    Alignment alignment = Alignment.center;
+
+    switch (_currentStage) {
+      case StoryStage.intro1Fall:
+        title = 'المكان مظلم تماماً.. وهناك شمعة بجانبك';
+        buttonText = 'إشعال الشمعة بعود الثقاب';
+        icon = Icons.local_fire_department_outlined;
+        alignment = const Alignment(-0.3, 0.3);
+        break;
+      case StoryStage.intro2Flashlight:
+        title = 'انطفأت الشمعة! يوجد مصباح يدوي على الأرض';
+        buttonText = 'التقاط الكشاف وتشغيله بسرعة';
+        icon = Icons.flashlight_on_outlined;
+        alignment = const Alignment(0.0, 0.72);
+        break;
+      case StoryStage.future1Enter:
+        title = 'هو أنا كده ماشي صح؟ (الشعور بالشك والتوهان)';
+        buttonText = 'المضي قدماً ومتابعة الكشاف';
+        icon = Icons.explore_outlined;
+        break;
+      case StoryStage.dark1Enter:
+        title = 'الجدران الحجرية تبدأ في الاقتراب من بعضها!';
+        buttonText = 'الاندفاع للأمام قبل انسداد الممر';
+        icon = Icons.directions_run_outlined;
+        break;
+      case StoryStage.phone1Enter:
+        title = 'الشاشة تنور فجأة في الظلام.. إشعار غامض وصلك!';
+        buttonText = 'فتح الإشعار وقراءة الرسالة الصوتية';
+        icon = Icons.notifications_active_outlined;
+        break;
+      default:
+        break;
+    }
+
+    return Container(
+      color: Colors.black.withOpacity(0.5),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Align(
+        alignment: alignment,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: 210,
+              child: TweenAnimationBuilder<double>(
+                key: ValueKey(_currentStage),
+                tween: Tween(begin: 1.0, end: 0.0),
+                duration: const Duration(seconds: 5),
+                onEnd: _handleActionPressed,
+                builder: (context, value, _) {
+                  return LinearProgressIndicator(
+                    value: value,
+                    backgroundColor: Colors.white12,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      value > 0.3 ? const Color(0xFF00FF88) : Colors.redAccent,
+                    ),
+                    minHeight: 5,
+                    borderRadius: BorderRadius.circular(8),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 18),
+            GestureDetector(
+              onTap: _handleActionPressed,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A0F0D),
+                  borderRadius: BorderRadius.circular(30),
+                  border:
+                      Border.all(color: const Color(0xFF00FF88), width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00FF88).withOpacity(0.35),
+                      blurRadius: 16,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, color: const Color(0xFF00FF88)),
+                    const SizedBox(width: 10),
+                    Text(
+                      buttonText,
+                      style: const TextStyle(
+                        color: Color(0xFF00FF88),
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// شاشة تقاطع الممرات (تشمل الممرات الثلاثة)
+  Widget _buildCorridorSelectionOverlay() {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 25, 20, 35),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [
+              Colors.black.withOpacity(0.95),
+              Colors.black.withOpacity(0.75),
+              Colors.transparent,
+            ],
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              '(Which way?) أي طريق ستسلك؟',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _buildChoiceButton(
+              text: '👁️ ممر الهمس والمرآة',
+              onTap: () => _loadStage(
+                StoryStage.future1Enter,
+                preloadStage: StoryStage.future2Mirror,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _buildChoiceButton(
+              text: '🌙 السرداب الضيق',
+              onTap: () => _loadStage(
+                StoryStage.dark1Enter,
+                preloadStage: StoryStage.dark2Narrow,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _buildChoiceButton(
+              text: '📱 ممر الهاتف والرسالة الواقعية',
+              onTap: () => _loadStage(
+                StoryStage.phone1Enter,
+                preloadStage: StoryStage.phone2Message,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCrawlStruggleOverlay() {
+    return Container(
+      color: Colors.black.withOpacity(0.6),
+      child: Align(
+        alignment: const Alignment(0.0, 0.4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'الجدران تطبق عليك والسقف ينخفض!',
+              style: TextStyle(
+                color: Colors.redAccent,
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'اضغط بسرعة للزحف للأمام ($_crawlTapsLeft ضغطات متبقية)',
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            const SizedBox(height: 18),
+            GestureDetector(
+              onTap: _handleCrawlTap,
+              child: Container(
+                width: 90,
+                height: 90,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF0A0F0D),
+                  border:
+                      Border.all(color: const Color(0xFF00FF88), width: 2.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00FF88).withOpacity(0.4),
+                      blurRadius: 22,
+                      spreadRadius: 4,
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.touch_app_outlined,
+                  color: Color(0xFF00FF88),
+                  size: 42,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// شاشة القرار النهائي (تنتقل لليوم الرابع دون إغلاق التطبيق)
+  Widget _buildFinalDecisionOverlay() {
+    final isMirrorScene = _currentStage == StoryStage.future2Mirror;
+    final isPhoneScene = _currentStage == StoryStage.phone2Message;
+
+    String question;
+    String firstChoice;
+    String secondChoice;
+
+    if (isPhoneScene) {
+      question = 'صوت نفسك من المستقبل يهمس: "ألسنا من ضيعنا سنيننا بالكسل؟".. ماذا ستفعل؟';
+      firstChoice = '💪 مواجهة الخوف والانتقال إلى اليوم الرابع';
+      secondChoice = '📱 الهروب وتجاهل الضمير (متابعة الكابوس)';
+    } else if (isMirrorScene) {
+      question = 'الأصوات والوجوه في المرآة تصرخ: "استسلم وخلاص.. عمرك ما هتوصل!"';
+      firstChoice = '💥 مواجهة الوشوهة والانتقال إلى اليوم الرابع';
+      secondChoice = '🚪 الاستسلام والخضوع لصوت الفشل';
+    } else {
+      question = 'انطفأ الكشاف وأطبقت الجدران حولك في الظلام.. ماذا ستفعل؟';
+      firstChoice = '🔦 تنظيم الأنفاس والانتقال إلى اليوم الرابع';
+      secondChoice = 'التراجع والعودة لتقاطع المتاهة';
+    }
+
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 30, 20, 40),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [
+              Colors.black.withOpacity(0.95),
+              Colors.black.withOpacity(0.8),
+              Colors.transparent,
+            ],
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              question,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.redAccent,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 18),
+            _buildChoiceButton(
+              text: firstChoice,
+              onTap: () => _onFinalChoiceMade(true),
+            ),
+            const SizedBox(height: 10),
+            _buildChoiceButton(
+              text: secondChoice,
+              onTap: () => _onFinalChoiceMade(false),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChoiceButton({required String text, required VoidCallback onTap}) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF0A0F0D),
+          foregroundColor: Colors.white,
+          side: const BorderSide(color: Color(0xFF00FF88), width: 1.2),
+          padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        onPressed: onTap,
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+        
