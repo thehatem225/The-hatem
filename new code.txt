@@ -1,0 +1,636 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:video_player/video_player.dart';
+
+enum StoryStage {
+  intro1Fall,          // 1. السقوط وإشعال الشمعة
+  intro2Flashlight,    // 2. انطفاء الشمعة والتقاط الكشاف
+  intro3WhichWay,      // 3. تقاطع الممرات (Which way)
+  future1Enter,        // ممر جلد الذات (أ): المشي بالكشاف
+  future2Mirror,       // ممر جلد الذات (ب): المرآة والأصوات
+  dark1Enter,          // السرداب الضيق (أ): الدخول
+  dark2Narrow,         // السرداب الضيق (ب): زحف الجدران
+  phoneCorridor,       // 📱 ممر السنين الضائعة (الفيديو المدمج 20 ثانية)
+}
+
+class FullInteractiveMazeGame extends StatefulWidget {
+  const FullInteractiveMazeGame({super.key});
+
+  @override
+  State<FullInteractiveMazeGame> createState() =>
+      _FullInteractiveMazeGameState();
+}
+
+class _FullInteractiveMazeGameState extends State<FullInteractiveMazeGame> {
+  static const Map<StoryStage, String> _stageVideos = {
+    StoryStage.intro1Fall: 'assets/videos/1_fall_candle.mp4',
+    StoryStage.intro2Flashlight: 'assets/videos/2_candle_flashlight.mp4',
+    StoryStage.intro3WhichWay: 'assets/videos/3_which_way.mp4',
+    StoryStage.future1Enter: 'assets/videos/clean_1.mp4',
+    StoryStage.future2Mirror: 'assets/videos/clean.mp4',
+    StoryStage.dark1Enter: 'assets/videos/6_dark_enter.mp4',
+    StoryStage.dark2Narrow: 'assets/videos/7_dark_narrow.mp4',
+    StoryStage.phoneCorridor: 'assets/videos/phone_corridor_20s.mp4',
+  };
+
+  StoryStage _currentStage = StoryStage.intro1Fall;
+
+  VideoPlayerController? _currentController;
+  VideoPlayerController? _nextController;
+  Timer? _heartbeatTimer;
+  Timer? _rageChargeTimer;
+
+  bool _showActionOverlay = false;
+  bool _actionCompletedInCurrentStage = false;
+  bool _showCorridorSelection = false;
+  bool _showCrawlStruggle = false;
+  bool _crawlCompleted = false;
+  int _crawlTapsLeft = 3;
+  bool _showFinalDecision = false;
+
+  // متغيرات التحكم الدقيق في فيديو الهاتف (20 ثانية)
+  // 0: انتظار السحب (2.5s) | 1: انتظار لمس الشاشة (9.5s) | 2: تحطيم الفقاعات (13s) | 3: شحن الغضب (18.2s) | 4: مكتمل
+  int _phoneStep = 0;
+  bool _showPhoneInteraction = false;
+  int _bubblesLeftToSmash = 5;
+  double _rageProgress = 0.0;
+  bool _isHoldingRage = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStage(StoryStage.intro1Fall, preloadStage: StoryStage.intro2Flashlight);
+  }
+
+  Future<void> _loadStage(
+    StoryStage stage, {
+    StoryStage? preloadStage,
+  }) async {
+    _stopHaptics();
+    _rageChargeTimer?.cancel();
+    final oldController = _currentController;
+    oldController?.removeListener(_videoListener);
+
+    setState(() {
+      _currentStage = stage;
+      _showActionOverlay = false;
+      _actionCompletedInCurrentStage = false;
+      _showCorridorSelection = false;
+      _showCrawlStruggle = false;
+      _crawlCompleted = false;
+      _crawlTapsLeft = 3;
+      _showFinalDecision = false;
+      _phoneStep = 0;
+      _showPhoneInteraction = false;
+      _bubblesLeftToSmash = 5;
+      _rageProgress = 0.0;
+      _isHoldingRage = false;
+    });
+
+    if (_nextController != null &&
+        _nextController!.dataSource == _stageVideos[stage]) {
+      _currentController = _nextController;
+      _nextController = null;
+    } else {
+      await _nextController?.dispose();
+      _nextController = null;
+      _currentController = VideoPlayerController.asset(_stageVideos[stage]!);
+      await _currentController!.initialize();
+    }
+
+    await _currentController!.setPlaybackSpeed(1.0);
+    _currentController!.addListener(_videoListener);
+    _currentController!.play();
+    setState(() {});
+
+    await oldController?.dispose();
+
+    if (preloadStage != null) {
+      _nextController = VideoPlayerController.asset(_stageVideos[preloadStage]!);
+      await _nextController!.initialize();
+    }
+  }
+
+  void _startHaptics({int intervalMs = 800}) {
+    _heartbeatTimer?.cancel();
+    HapticFeedback.heavyImpact();
+    _heartbeatTimer = Timer.periodic(Duration(milliseconds: intervalMs), (_) {
+      HapticFeedback.mediumImpact();
+    });
+  }
+
+  void _stopHaptics() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  void _videoListener() {
+    final controller = _currentController;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    final pos = controller.value.position.inMilliseconds;
+    final dur = controller.value.duration.inMilliseconds;
+
+    switch (_currentStage) {
+      case StoryStage.intro1Fall:
+        if (!_actionCompletedInCurrentStage && pos >= 5500) {
+          if (!_showActionOverlay) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showActionOverlay = true);
+          }
+          return;
+        }
+        if (pos >= dur - 150 && !controller.value.isPlaying) {
+          _loadStage(
+            StoryStage.intro2Flashlight,
+            preloadStage: StoryStage.intro3WhichWay,
+          );
+        }
+        break;
+
+      case StoryStage.intro2Flashlight:
+        if (!_actionCompletedInCurrentStage && pos >= 6000) {
+          if (!_showActionOverlay) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showActionOverlay = true);
+          }
+          return;
+        }
+        if (pos >= dur - 150 && !controller.value.isPlaying) {
+          _loadStage(StoryStage.intro3WhichWay);
+        }
+        break;
+
+      case StoryStage.intro3WhichWay:
+        if (pos >= 7000) {
+          if (!_showCorridorSelection) {
+            _startHaptics();
+            setState(() => _showCorridorSelection = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 7000));
+          }
+        }
+        break;
+
+      case StoryStage.future1Enter:
+        if (pos >= 4200 && !_showActionOverlay) {
+          controller.pause();
+          _startHaptics();
+          setState(() => _showActionOverlay = true);
+        }
+        break;
+
+      case StoryStage.future2Mirror:
+        if (pos >= 6500) {
+          if (!_showFinalDecision) {
+            _startHaptics();
+            setState(() => _showFinalDecision = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 6500));
+          }
+        }
+        break;
+
+      case StoryStage.dark1Enter:
+        if (pos >= 8500 && !_showActionOverlay) {
+          controller.pause();
+          _startHaptics();
+          setState(() => _showActionOverlay = true);
+        }
+        break;
+
+      case StoryStage.dark2Narrow:
+        if (!_crawlCompleted && pos >= 5200) {
+          if (!_showCrawlStruggle) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showCrawlStruggle = true);
+          }
+          return;
+        }
+        if (_crawlCompleted && pos >= 8000) {
+          if (!_showFinalDecision) {
+            _startHaptics();
+            setState(() => _showFinalDecision = true);
+          }
+          if (pos >= dur - 250) {
+            controller.seekTo(const Duration(milliseconds: 8000));
+          }
+        }
+        break;
+
+      case StoryStage.phoneCorridor:
+        // 1. عند 00:02.5: التوقف للسحب لأعلى وإخراج الهاتف
+        if (_phoneStep == 0 && pos >= 2500) {
+          if (!_showPhoneInteraction) {
+            controller.pause();
+            _startHaptics(intervalMs: 600);
+            setState(() => _showPhoneInteraction = true);
+          }
+          return;
+        }
+
+        // 2. عند 00:09.5: التوقف بعد "إزاي في شبكة هنا أصلاً؟" للمس شاشة الواتساب
+        if (_phoneStep == 1 && pos >= 9500) {
+          if (!_showPhoneInteraction) {
+            controller.pause();
+            _startHaptics(intervalMs: 500);
+            setState(() => _showPhoneInteraction = true);
+          }
+          return;
+        }
+
+        // 3. من 00:13.0 إلى 00:17.0: إبطاء السرعة وتحطيم فقاعات الرسائل
+        if (_phoneStep == 2 && pos >= 13000 && pos < 17000) {
+          if (!_showPhoneInteraction) {
+            controller.setPlaybackSpeed(0.6);
+            _startHaptics(intervalMs: 450);
+            setState(() => _showPhoneInteraction = true);
+          }
+          return;
+        }
+        if (_phoneStep == 2 && pos >= 17000) {
+          // في حال انتهاء وقت الفقاعات قبل إكمال الضغطات
+          controller.setPlaybackSpeed(1.0);
+          _stopHaptics();
+          setState(() {
+            _showPhoneInteraction = false;
+            _phoneStep = 3;
+          });
+        }
+
+        // 4. عند 00:18.2: التوقف لشحن صرخة الغضب بعد "فوق لنفسك قبل ما تبقى أنا!"
+        if (_phoneStep == 3 && pos >= 18200) {
+          if (!_showPhoneInteraction) {
+            controller.pause();
+            _startHaptics(intervalMs: 350);
+            setState(() => _showPhoneInteraction = true);
+          }
+          return;
+        }
+
+        // 5. عند نهاية الفيديو (00:19.6): إظهار القرار النهائي
+        if (_phoneStep == 4 && pos >= dur - 350) {
+          if (!_showFinalDecision) {
+            controller.pause();
+            _startHaptics();
+            setState(() => _showFinalDecision = true);
+          }
+        }
+        break;
+    }
+  }
+
+  // --- معالجات التفاعل الأربعة لممر الهاتف ---
+
+  void _onPhoneSwipeUp() {
+    if (_phoneStep != 0) return;
+    _stopHaptics();
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _showPhoneInteraction = false;
+      _phoneStep = 1;
+    });
+    _currentController?.play();
+  }
+
+  void _onWhatsAppScreenTap() {
+    if (_phoneStep != 1) return;
+    _stopHaptics();
+    HapticFeedback.selectionClick();
+    setState(() {
+      _showPhoneInteraction = false;
+      _phoneStep = 2;
+    });
+    _currentController?.play();
+  }
+
+  void _onBubbleSmashTap() {
+    if (_phoneStep != 2) return;
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _bubblesLeftToSmash--;
+      if (_bubblesLeftToSmash <= 0) {
+        _showPhoneInteraction = false;
+        _phoneStep = 3;
+        _stopHaptics();
+        _currentController?.setPlaybackSpeed(1.0);
+      }
+    });
+  }
+
+  void _onRageHoldStart() {
+    if (_phoneStep != 3) return;
+    setState(() => _isHoldingRage = true);
+    _rageChargeTimer?.cancel();
+    _rageChargeTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      HapticFeedback.heavyImpact();
+      setState(() {
+        _rageProgress += 0.04;
+        if (_rageProgress >= 1.0) {
+          _rageProgress = 1.0;
+          timer.cancel();
+          _completeRageCharge();
+        }
+      });
+    });
+  }
+
+  void _onRageHoldEnd() {
+    if (_phoneStep != 3 || _rageProgress >= 1.0) return;
+    _rageChargeTimer?.cancel();
+    setState(() {
+      _isHoldingRage = false;
+      _rageProgress = 0.0;
+    });
+  }
+
+  void _completeRageCharge() {
+    _stopHaptics();
+    HapticFeedback.vibrate();
+    setState(() {
+      _isHoldingRage = false;
+      _showPhoneInteraction = false;
+      _phoneStep = 4;
+    });
+    _currentController?.play();
+  }
+
+  // --- معالجات باقي المراحل ---
+
+  void _handleActionPressed() {
+    _stopHaptics();
+    HapticFeedback.lightImpact();
+
+    if (_currentStage == StoryStage.intro1Fall ||
+        _currentStage == StoryStage.intro2Flashlight) {
+      setState(() {
+        _showActionOverlay = false;
+        _actionCompletedInCurrentStage = true;
+      });
+      _currentController?.play();
+    } else if (_currentStage == StoryStage.future1Enter) {
+      _loadStage(StoryStage.future2Mirror);
+    } else if (_currentStage == StoryStage.dark1Enter) {
+      _loadStage(StoryStage.dark2Narrow);
+    }
+  }
+
+  void _handleCrawlTap() {
+    HapticFeedback.heavyImpact();
+    setState(() {
+      _crawlTapsLeft--;
+      if (_crawlTapsLeft <= 0) {
+        _showCrawlStruggle = false;
+        _crawlCompleted = true;
+        _stopHaptics();
+        _currentController?.play();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _stopHaptics();
+    _rageChargeTimer?.cancel();
+    _currentController?.removeListener(_videoListener);
+    _currentController?.dispose();
+    _nextController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isReady =
+        _currentController != null && _currentController!.value.isInitialized;
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (isReady)
+            Center(
+              child: AspectRatio(
+                aspectRatio: _currentController!.value.aspectRatio,
+                child: VideoPlayer(_currentController!),
+              ),
+            )
+          else
+            const Center(
+              child: CircularProgressIndicator(color: Color(0xFF00FF66)),
+            ),
+
+          if (_showActionOverlay) _buildStageActionOverlay(),
+
+          if (_showCorridorSelection) _buildCorridorSelectionOverlay(),
+
+          if (_showCrawlStruggle) _buildCrawlStruggleOverlay(),
+
+          // واجهة التفاعلات الأربع الخاصة بممر الهاتف
+          if (_currentStage == StoryStage.phoneCorridor && _showPhoneInteraction)
+            _buildPhoneInteractiveOverlay(),
+
+          if (_showFinalDecision) _buildFinalDecisionOverlay(),
+        ],
+      ),
+    );
+  }
+
+  /// 📱 واجهة التفاعلات الأربع المخصصة لفيديو الهاتف (20 ثانية)
+  Widget _buildPhoneInteractiveOverlay() {
+    // 1. تفاعل السحب لأعلى لإخراج الهاتف (عند 00:02.5)
+    if (_phoneStep == 0) {
+      return GestureDetector(
+        onVerticalDragEnd: (details) {
+          if (details.primaryVelocity != null && details.primaryVelocity! < -150) {
+            _onPhoneSwipeUp();
+          }
+        },
+        child: Container(
+          color: Colors.black38,
+          alignment: const Alignment(-0.35, 0.35),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.keyboard_double_arrow_up_rounded,
+                color: Color(0xFF00FF66),
+                size: 54,
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFF00FF66), width: 1.5),
+                ),
+                child: const Text(
+                  'اسحب لأعلى لرفع الهاتف المضيء ⬆️',
+                  style: TextStyle(
+                    color: Color(0xFF00FF66),
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 2. تفاعل لمس شاشة الموبايل لتشغيل الريكورد (عند 00:09.5)
+    if (_phoneStep == 1) {
+      return Stack(
+        children: [
+          Align(
+            alignment: const Alignment(0.0, -0.7),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                'المس شاشة الهاتف لتشغيل الرسالة الصوتية',
+                style: TextStyle(color: Colors.white, fontSize: 15),
+              ),
+            ),
+          ),
+          Align(
+            alignment: const Alignment(-0.55, 0.18), // فوق شاشة الهاتف في الفيديو مباشرة
+            child: GestureDetector(
+              onTap: _onWhatsAppScreenTap,
+              child: Container(
+                width: 95,
+                height: 155,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF25D366).withOpacity(0.25),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFF00FF66), width: 2.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00FF66).withOpacity(0.5),
+                      blurRadius: 20,
+                      spreadRadius: 3,
+                    ),
+                  ],
+                ),
+                child: const Center(
+                  child: Icon(
+                    Icons.play_circle_fill_rounded,
+                    color: Color(0xFF00FF66),
+                    size: 48,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // 3. تفاعل تحطيم فقاعات الندم أثناء التصوير البطيء (من 00:13 إلى 00:17)
+    if (_phoneStep == 2) {
+      return GestureDetector(
+        onTap: _onBubbleSmashTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          color: Colors.red.withOpacity(0.08),
+          alignment: const Alignment(0.0, 0.55),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'حطّم رسائل الندم قبل أن تحاصرك!',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(30),
+                  border: Border.all(color: Colors.redAccent, width: 2),
+                ),
+                child: Text(
+                  'اضغط بسرعة ($_bubblesLeftToSmash ضغطات متبقية) 💥',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 4. تفاعل الضغط المطول لشحن صرخة الغضب (عند 00:18.2)
+    return Container(
+      color: Colors.black45,
+      alignment: const Alignment(0.0, 0.45),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            '"فوق لنفسك قبل ما تبقى أنا!"',
+            style: TextStyle(
+              color: Colors.redAccent,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'اضغط مطولاً لشحن غضبك وكسر الحصار',
+            style: TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+          const SizedBox(height: 20),
+          GestureDetector(
+            onLongPressStart: (_) => _onRageHoldStart(),
+            onLongPressEnd: (_) => _onRageHoldEnd(),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox(
+                  width: 110,
+                  height: 110,
+                  child: CircularProgressIndicator(
+                    value: _rageProgress,
+                    strokeWidth: 7,
+                    backgroundColor: Colors.white12,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Colors.redAccent,
+                    ),
+                  ),
+                ),
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width: _isHoldingRage ? 92 : 82,
+                  height: _isHoldingRage ? 92 : 82,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _isHoldingRage
+                        ? Colors.redAccent.withOpacity(0.85)
+                        : const Color(0xFF0A0F0D),
+                    border: Border.all(color: Colors.redAccent, width: 2.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.redAccent.withOpacity(
+                          _isHoldingRage ? 0.7 : 0.3,
+                        ),
+       
