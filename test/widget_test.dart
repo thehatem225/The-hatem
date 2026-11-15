@@ -61,14 +61,32 @@ Future<void> _openJourneyToFinalDay(WidgetTester tester) async {
 
 void main() {
   test('Day 3 video order and live scene context match the story', () {
+    expect(dayThreeStartingPhase, 1);
     expect(dayThreeVideoPaths, [
-      'gemini_generated_video_605edff7.mp4',
-      'gemini_generated_video_42007b75.mp4',
-      'gemini_generated_video_516c98f4.mp4',
+      'assets/videos/day3/day3_04_first_corridor.mp4',
+      'assets/videos/day3/day3_02_light_candle.mp4',
+      'assets/videos/day3/day3_03_what_way.mp4',
+      'assets/videos/day3/day3_01_door_fall.mp4',
+      'assets/videos/day3/day3_05_mirror.mp4',
+      'assets/videos/day3/day3_06_second_corridor.mp4',
+      'assets/videos/day3/day3_07_narrow_corridor_dark.mp4',
+      'assets/videos/day3/clean-1.mp4',
+      'assets/videos/day3/clean.mp4',
+      'assets/videos/day3/gemini_generated_video_6b557083.mp4',
     ]);
-    expect(dayThreeSceneContext(1), contains('rocks collapse'));
-    expect(dayThreeSceneContext(2), contains('candle is thrown'));
-    expect(dayThreeSceneContext(3), contains('hidden corridors'));
+    expect(dayThreeSceneContext(1), contains('falls as the door collapses'));
+    expect(dayThreeSceneContext(2), contains('lights a candle'));
+    expect(dayThreeSceneContext(3), contains('which way'));
+    expect(dayThreeSceneContext(4), contains('mirror corridor'));
+    expect(dayThreeSceneContext(5), contains('mirror'));
+    expect(dayThreeSceneContext(6), contains('second corridor'));
+    expect(dayThreeSceneContext(7), contains('light goes out'));
+    expect(dayThreeSceneContext(8), contains('inner conflict corridor'));
+    expect(
+      dayThreeSceneContext(9),
+      contains('inner conflict at the corridor end'),
+    );
+    expect(dayThreeSceneContext(10), contains('alarm on their phone'));
   });
 
   testWidgets('burn effect animates the card away', (

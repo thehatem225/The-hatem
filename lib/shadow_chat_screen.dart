@@ -37,7 +37,7 @@ class _ShadowChatScreenState extends State<ShadowChatScreen>
     with TickerProviderStateMixin {
   int currentStage = 1;
   int _dayTwoPhase = 1;
-  int _dayThreePhase = 1;
+  int _dayThreePhase = dayThreeStartingPhase;
   double userBraveryScore = 20.0;
   _DayOnePhase _dayOnePhase = _DayOnePhase.morning;
   bool _doorOpened = false;
@@ -45,6 +45,7 @@ class _ShadowChatScreenState extends State<ShadowChatScreen>
   bool _isDayOneAudioTransitioning = false;
   bool _isDayTwoVideoPaused = false;
   bool _isDayThreeVideoPaused = false;
+  bool _dayThreeInteractionActive = false;
   bool _isDayOneVideoPaused = false;
   bool _didQueueDoorPrecache = false;
   bool _doorWindStarted = false;
@@ -211,7 +212,7 @@ class _ShadowChatScreenState extends State<ShadowChatScreen>
       case 2:
         return Colors.transparent;
       case 3:
-        return Colors.black.withOpacity(0.62);
+        return Colors.transparent;
       case 4:
         return Colors.orange.withOpacity(0.18);
       default:
@@ -341,15 +342,18 @@ class _ShadowChatScreenState extends State<ShadowChatScreen>
 
   String get _advanceJourneyLabel {
     if (!_canAdvanceJourney) {
-      return currentStage == 3
-          ? 'انتظر 10 ثوانٍ من المقطع'
-          : 'جارٍ تشغيل المقطع';
+      if (currentStage != 3) return 'جارٍ تشغيل المقطع';
+      if (_dayThreePhase <= 3) return 'انتظر 10 ثوانٍ من المقطع';
+      if (_dayThreePhase <= 7) return 'تفاعل مع المشهد للمتابعة';
+      return 'جارٍ تشغيل المقطع';
     }
     if (currentStage == 1 && _dayOnePhase != _DayOnePhase.fearSelected) {
       return 'الفيديو التالي';
     }
     if (currentStage == 2 && _dayTwoPhase < 3) return 'الفيديو التالي';
-    if (currentStage == 3 && _dayThreePhase < 3) return 'الفيديو التالي';
+    if (currentStage == 3 && _dayThreePhase < 3) {
+      return 'الفيديو التالي';
+    }
     return 'اليوم التالي';
   }
 
@@ -406,21 +410,30 @@ class _ShadowChatScreenState extends State<ShadowChatScreen>
         unawaited(_dayOneAudio.stopFearAudio());
         setState(() {
           currentStage = 3;
-          _dayThreePhase = 1;
+          _dayThreePhase = dayThreeStartingPhase;
           _isDayThreeVideoPaused = false;
+          _dayThreeInteractionActive = false;
         });
       }
       return;
     }
     if (currentStage == 3) {
       if (!_isDayThreeVideoPaused) return;
-      if (_dayThreePhase < 3) {
+      if ([5, 7, 9].contains(_dayThreePhase)) {
+        setState(() {
+          currentStage = 4;
+          _dayThreeInteractionActive = false;
+        });
+      } else if (_dayThreePhase < 3) {
         setState(() {
           _dayThreePhase++;
           _isDayThreeVideoPaused = false;
         });
       } else {
-        setState(() => currentStage = 4);
+        setState(() {
+          currentStage = 4;
+          _dayThreeInteractionActive = false;
+        });
       }
       return;
     }
@@ -434,6 +447,19 @@ class _ShadowChatScreenState extends State<ShadowChatScreen>
 
   void _onDayThreeVideoComplete() {
     if (mounted) setState(() => _isDayThreeVideoPaused = true);
+  }
+
+  void _onDayThreePhaseChanged(int phase) {
+    if (mounted) {
+      setState(() {
+        _dayThreePhase = phase;
+        _isDayThreeVideoPaused = false;
+      });
+    }
+  }
+
+  void _onDayThreeInteractionChanged(bool active) {
+    if (mounted) setState(() => _dayThreeInteractionActive = active);
   }
 
   void _onDayTwoVideoComplete() {
@@ -1085,6 +1111,8 @@ class _ShadowChatScreenState extends State<ShadowChatScreen>
               : currentStage == 3
                 ? StorySequencePlayer(
                     phase: _dayThreePhase,
+                    onPhaseChanged: _onDayThreePhaseChanged,
+                    onInteractionChanged: _onDayThreeInteractionChanged,
                     onComplete: _onDayThreeVideoComplete,
                   )
               : DayOneAnimationOverlay(
@@ -1105,8 +1133,12 @@ class _ShadowChatScreenState extends State<ShadowChatScreen>
                   : null,
                 ),
           ),
-          Container(color: _getOverlayColor()),
-          SafeArea(
+          if (currentStage != 3 ||
+              (_isDayThreeVideoPaused && !_dayThreeInteractionActive))
+            Container(color: _getOverlayColor()),
+          if (currentStage != 3 ||
+              (_isDayThreeVideoPaused && !_dayThreeInteractionActive))
+            SafeArea(
             child: Column(
               children: [
                 Expanded(
@@ -1227,7 +1259,8 @@ class _ShadowChatScreenState extends State<ShadowChatScreen>
                     ),
                   ),
 
-                if (currentStage < 4)
+                if (currentStage < 3 ||
+                    (currentStage == 3 && _isDayThreeVideoPaused))
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,

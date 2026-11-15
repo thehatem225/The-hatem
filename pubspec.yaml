@@ -52,9 +52,7 @@ flutter:
     - assets/videos/day1/posters/broken_branches.jpg
     - assets/videos/day1/posters/storm_wind.jpg
     - assets/videos/day2/day2.mp4
-    - gemini_generated_video_605edff7.mp4
-    - gemini_generated_video_42007b75.mp4
-    - gemini_generated_video_516c98f4.mp4
+    - assets/videos/day3/
     - assets/audio/forest_birds.mp3
     - assets/audio/day1/
     - assets/audio/wind_gust.mp3
